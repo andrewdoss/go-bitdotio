@@ -2,13 +2,16 @@
 
 Very early work-in-progress on a Go SDK for bit.io. Many TODO's are noted 
 throughout the code. At a high-level, major TODO's include:
-- Handling HTTP request/wrapper methods with optional body keys
+- How to best handle optiona API params, esp. IsPrivate which defaults to false
+    - Should we use varying constructors, or make users explicitly provide all params in each call to a bitdotio method?
 - API Import/Export
 - Query Endpoint
 - Postgres connections/pooling
 - Tests
-- Real logging
+- Real/configurable logging
 - Organizing as a proper Go module
+- Cleaning up private/exported identifiers
+- Error message handling
 
 Testing is not set up yet, `main.go` demonstrates the initial progress.
 

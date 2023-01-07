@@ -38,7 +38,7 @@ type BitDotIO struct {
 	APIClient   APIClient
 }
 
-// NewBitDotIO constructs a new BitDotIO client
+// NewBitDotIO constructs a new BitDotIO client.
 func NewBitDotIO(accessToken string) *BitDotIO {
 	return &BitDotIO{
 		AccessToken: accessToken,
@@ -62,8 +62,7 @@ func (b *BitDotIO) ListDatabases() (*DatabaseList, error) {
 
 // CreateDatabase creates a new database.
 // TODO: currently doesn't support variable storageLimitBytes
-func (b *BitDotIO) CreateDatabase(name string, isPrivate bool) (*Database, error) {
-	databaseConfig := DatabaseConfig{Name: name, IsPrivate: isPrivate}
+func (b *BitDotIO) CreateDatabase(name string, databaseConfig *DatabaseConfig) (*Database, error) {
 	body, err := json.Marshal(databaseConfig)
 	if err != nil {
 		err = fmt.Errorf("failed to serialize new database params: %v", err)
@@ -102,7 +101,7 @@ func (b *BitDotIO) GetDatabase(username, dbName string) (*Database, error) {
 	return &database, err
 }
 
-// DeleteDatabase gets metadata about a single database.
+// DeleteDatabase deletes a single database.
 func (b *BitDotIO) DeleteDatabase(username, dbName string) error {
 	path, err := url.JoinPath("db/", username, dbName)
 	if err != nil {
@@ -119,17 +118,13 @@ func (b *BitDotIO) DeleteDatabase(username, dbName string) error {
 }
 
 // UpdateDatabase updates the configuration of a database.
-// TODO: Need to overhaul to add StorageLimitBytes and so  StorageLimitBytes,
-// setDBName, and isPrivate can be set independently, rather than always both
-// being passed in the request.
-func (b *BitDotIO) UpdateDatabase(username, dbName, setDBName string, isPrivate bool) (*Database, error) {
+func (b *BitDotIO) UpdateDatabase(username, dbName string, databaseConfig *DatabaseConfig) (*Database, error) {
 	path, err := url.JoinPath("db/", username, dbName)
 	if err != nil {
 		err = fmt.Errorf("failed to construct request path: %v", err)
 		return nil, err
 	}
 
-	databaseConfig := DatabaseConfig{Name: setDBName, IsPrivate: isPrivate}
 	body, err := json.Marshal(databaseConfig)
 	if err != nil {
 		err = fmt.Errorf("failed to serialize new database params: %v", err)
@@ -146,4 +141,34 @@ func (b *BitDotIO) UpdateDatabase(username, dbName, setDBName string, isPrivate 
 		err = fmt.Errorf("JSON unmarshaling failed: %s", err)
 	}
 	return &database, err
+}
+
+// CreateKey creates a new API key/database password with the same permissions as the requester
+func (b *BitDotIO) CreateKey() (*Credentials, error) {
+	path := "api-key/"
+
+	data, err := b.APIClient.Call("POST", path, nil)
+	if err != nil {
+		err = fmt.Errorf("failed to create a new key: %v", err)
+		return nil, err
+	}
+	var credentials Credentials
+	if err = json.Unmarshal(data, &credentials); err != nil {
+		err = fmt.Errorf("JSON unmarshaling failed: %s", err)
+	}
+	return &credentials, err
+}
+
+// ListServiceAccounts lists metadata pertaining to service accounts the requester has created
+func (b *BitDotIO) ListServiceAccounts() (*ServiceAccountList, error) {
+	data, err := b.APIClient.Call("GET", "service-account/", nil)
+	if err != nil {
+		err = fmt.Errorf("failed to get a list of service accounts: %v", err)
+		return nil, err
+	}
+	var serviceAccountList ServiceAccountList
+	if err = json.Unmarshal(data, &serviceAccountList); err != nil {
+		err = fmt.Errorf("JSON unmarshaling failed: %s", err)
+	}
+	return &serviceAccountList, err
 }

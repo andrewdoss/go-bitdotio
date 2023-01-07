@@ -33,8 +33,6 @@ func NewDefaultAPIClient(accessToken string) *DefaultAPIClient {
 }
 
 // Call creates and executes an authenticated HTTP request against bit.io APIs.
-// TODO: Need to think more about the signature/interface — sending a nill argument
-// for all requests without a body doens't seem quite right.
 func (c *DefaultAPIClient) Call(method, path string, reqBody []byte) ([]byte, error) {
 	req, err := c.NewRequest(method, path, reqBody)
 	if err != nil {
@@ -77,7 +75,7 @@ func (c *DefaultAPIClient) NewRequest(method, path string, body []byte) (*http.R
 	// TODO: Find a cleaner way to handle potentially nil body
 	var req *http.Request
 	if body != nil {
-		buf := bytes.NewBuffer(body)
+		buf := bytes.NewReader(body)
 		req, err = http.NewRequest(method, path, buf)
 	} else {
 		req, err = http.NewRequest(method, path, nil)
