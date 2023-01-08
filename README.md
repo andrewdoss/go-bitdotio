@@ -2,6 +2,7 @@
 
 Very early work-in-progress on a Go SDK for bit.io. Many TODO's are noted 
 throughout the code. At a high-level, major TODO's include:
+- Handle dates without times
 - How to best handle optiona API params, esp. IsPrivate which defaults to false
     - Should we use varying constructors, or make users explicitly provide all params in each call to a bitdotio method?
 - API Import/Export

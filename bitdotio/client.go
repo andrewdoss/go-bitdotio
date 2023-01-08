@@ -9,9 +9,6 @@ import (
 )
 
 // APIClient provides an interface for potential mocking of an actual HTTP client
-// TODO: Need to confirm this is the right organization/interface to enable
-// testing of the BitDotIO methods. Will confirm when I write actual tests and
-// get up to speed on Go HTTP mocking.
 type APIClient interface {
 	Call(method, path string, body []byte) ([]byte, error)
 }
@@ -20,7 +17,6 @@ type APIClient interface {
 type DefaultAPIClient struct {
 	accessToken string
 	HTTPClient  *http.Client
-	Logger      Logger
 }
 
 // NewDefaultAPIClient constructs a default client for making API HTTP requests.
@@ -28,7 +24,6 @@ func NewDefaultAPIClient(accessToken string) *DefaultAPIClient {
 	return &DefaultAPIClient{
 		accessToken: accessToken,
 		HTTPClient:  &http.Client{},
-		Logger:      newDefaultLogger(),
 	}
 }
 
@@ -37,31 +32,30 @@ func (c *DefaultAPIClient) Call(method, path string, reqBody []byte) ([]byte, er
 	req, err := c.NewRequest(method, path, reqBody)
 	if err != nil {
 		err = fmt.Errorf("failed to create a new request: %v", err)
-		c.Logger.Errorf("%v", err)
 		return nil, err
 	}
 
 	res, err := c.HTTPClient.Do(req)
+
+	var resBody []byte
+	if err == nil {
+		resBody, err = io.ReadAll(res.Body)
+		res.Body.Close()
+	}
+
 	if err != nil {
-		err = fmt.Errorf("request failed: %v", err)
-		c.Logger.Errorf("%v", err)
-		return nil, err
-	}
-	defer res.Body.Close()
-
-	body, err := io.ReadAll(res.Body)
-	if err != nil {
-		err = fmt.Errorf("failed to read response body: %v", err)
-		c.Logger.Errorf("%v", err)
-		return nil, err
+		err = fmt.Errorf("request failed with error: %v", err)
+	} else if res.StatusCode >= 400 {
+		err = c.HandleErrorResponse(res, resBody)
 	}
 
-	if res.StatusCode >= 400 {
-		err = fmt.Errorf("%s: %s", res.Status, string(body))
-		c.Logger.Errorf("%v", err)
-	}
+	return resBody, err
+}
 
-	return body, err
+// HandleErrorResponse converts an Error API response to an Error.
+// TODO: Possibly should provide further unmarshalling of error body.
+func (s *DefaultAPIClient) HandleErrorResponse(res *http.Response, resBody []byte) error {
+	return &APIError{Status: res.StatusCode, Body: string(resBody)}
 }
 
 // NewRequest constructs requests for bit.io APIs.
@@ -69,10 +63,9 @@ func (c *DefaultAPIClient) NewRequest(method, path string, body []byte) (*http.R
 	path, err := url.JoinPath(APIURL, APIVersion, path)
 	if err != nil {
 		err = fmt.Errorf("failed to construct request path: %v", err)
-		c.Logger.Errorf("%v", err)
 	}
 
-	// TODO: Find a cleaner way to handle potentially nil body
+	// This method is shared with requests with no body, so need to handle nil.
 	var req *http.Request
 	if body != nil {
 		buf := bytes.NewReader(body)
@@ -87,8 +80,6 @@ func (c *DefaultAPIClient) NewRequest(method, path string, body []byte) (*http.R
 	req.Header.Add("Accept", "application/json")
 	req.Header.Add("Authorization", "Bearer "+c.accessToken)
 	req.Header.Add("User-Agent", UserAgent)
-
-	// TODO: Handle setting other headers with parms, if needed
 
 	return req, nil
 }

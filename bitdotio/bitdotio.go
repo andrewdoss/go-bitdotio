@@ -47,7 +47,7 @@ func NewBitDotIO(accessToken string) *BitDotIO {
 }
 
 // ListDatabases lists metadata for all databases that you own or are a collaborator on.
-func (b *BitDotIO) ListDatabases() (*DatabaseList, error) {
+func (b *BitDotIO) ListDatabases() ([]*Database, error) {
 	data, err := b.APIClient.Call("GET", "db/", nil)
 	if err != nil {
 		err = fmt.Errorf("failed to get list of databases: %v", err)
@@ -57,11 +57,10 @@ func (b *BitDotIO) ListDatabases() (*DatabaseList, error) {
 	if err = json.Unmarshal(data, &databaseList); err != nil {
 		err = fmt.Errorf("JSON unmarshaling failed: %s", err)
 	}
-	return &databaseList, err
+	return databaseList.Databases, err
 }
 
 // CreateDatabase creates a new database.
-// TODO: currently doesn't support variable storageLimitBytes
 func (b *BitDotIO) CreateDatabase(name string, databaseConfig *DatabaseConfig) (*Database, error) {
 	body, err := json.Marshal(databaseConfig)
 	if err != nil {
@@ -160,7 +159,7 @@ func (b *BitDotIO) CreateKey() (*Credentials, error) {
 }
 
 // ListServiceAccounts lists metadata pertaining to service accounts the requester has created
-func (b *BitDotIO) ListServiceAccounts() (*ServiceAccountList, error) {
+func (b *BitDotIO) ListServiceAccounts() ([]*ServiceAccount, error) {
 	data, err := b.APIClient.Call("GET", "service-account/", nil)
 	if err != nil {
 		err = fmt.Errorf("failed to get a list of service accounts: %v", err)
@@ -170,5 +169,61 @@ func (b *BitDotIO) ListServiceAccounts() (*ServiceAccountList, error) {
 	if err = json.Unmarshal(data, &serviceAccountList); err != nil {
 		err = fmt.Errorf("JSON unmarshaling failed: %s", err)
 	}
-	return &serviceAccountList, err
+	return serviceAccountList.ServiceAccounts, err
+}
+
+// GetServiceAccount gets metadata about a single service account.
+func (b *BitDotIO) GetServiceAccount(serviceAccountID string) (*ServiceAccount, error) {
+	path, err := url.JoinPath("service-account", serviceAccountID)
+	if err != nil {
+		err = fmt.Errorf("failed to construct request path: %v", err)
+		return nil, err
+	}
+
+	data, err := b.APIClient.Call("GET", path, nil)
+	if err != nil {
+		err = fmt.Errorf("failed to get service account: %v", err)
+		return nil, err
+	}
+	var serviceAccount ServiceAccount
+	if err = json.Unmarshal(data, &serviceAccount); err != nil {
+		err = fmt.Errorf("JSON unmarshaling failed: %s", err)
+	}
+	return &serviceAccount, err
+}
+
+// CreateServiceAccountKey creates a new key for a service account.
+func (b *BitDotIO) CreateServiceAccountKey(serviceAccountID string) (*Credentials, error) {
+	path, err := url.JoinPath("service-account", serviceAccountID, "api-key/")
+	if err != nil {
+		err = fmt.Errorf("failed to construct request path: %v", err)
+		return nil, err
+	}
+
+	data, err := b.APIClient.Call("POST", path, nil)
+	if err != nil {
+		err = fmt.Errorf("failed to create new service account key: %v", err)
+		return nil, err
+	}
+	var credentials Credentials
+	if err = json.Unmarshal(data, &credentials); err != nil {
+		err = fmt.Errorf("JSON unmarshaling failed: %s", err)
+	}
+	return &credentials, err
+}
+
+// RevokeServiceAccountKeys revokes all keys for a service account.
+func (b *BitDotIO) RevokeServiceAccountKeys(serviceAccountID string) error {
+	path, err := url.JoinPath("service-account", serviceAccountID, "api-key/")
+	if err != nil {
+		err = fmt.Errorf("failed to construct request path: %v", err)
+		return err
+	}
+
+	_, err = b.APIClient.Call("DELETE", path, nil)
+	if err != nil {
+		err = fmt.Errorf("failed to revoke service account keys: %v", err)
+		return err
+	}
+	return err
 }
