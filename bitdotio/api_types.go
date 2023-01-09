@@ -1,6 +1,9 @@
 package bitdotio
 
-import "time"
+import (
+	"io"
+	"time"
+)
 
 // DatabaseList contains a list of Databases.
 type DatabaseList struct {
@@ -33,7 +36,7 @@ type Usage struct {
 	PeriodEnd   string `json:"period_end"`
 }
 
-// DatabaseConfig maps the Create/Update Database JSON body to a Go struct for marshalling
+// DatabaseConfig maps the Create/Update Database JSON body to a Go struct for marshalling.
 type DatabaseConfig struct {
 	Name string `json:"name,omitempty"`
 	// TODO: This field seems like a potential footgun, as the zero-value is valid and makes a db public.
@@ -41,7 +44,7 @@ type DatabaseConfig struct {
 	StorageLimitBytes int64 `json:"storage_limit_bytes,omitempty"`
 }
 
-// Credentials contains credentials for a personal or service account
+// Credentials contains credentials for a personal or service account.
 type Credentials struct {
 	Username string `json:"username"`
 	APIKEY   string `json:"api_key"`
@@ -52,7 +55,7 @@ type ServiceAccountList struct {
 	ServiceAccounts []*ServiceAccount `json:"service_accounts"`
 }
 
-// ServiceAccount contains metadata about a bit.io service account
+// ServiceAccount contains metadata about a bit.io service account.
 type ServiceAccount struct {
 	ID               string        `json:"id"`
 	Name             string        `json:"name"`
@@ -61,4 +64,38 @@ type ServiceAccount struct {
 	Databases        []*DatabaseID `json:"databases"`
 	TokenCount       int64         `json:"token_count"`
 	ActiveTokenCount int64         `json:"active_token_count"`
+}
+
+// TransferJob contains metadata about an import or export job.
+type TransferJob struct {
+	ID           string    `json:"id"`
+	DateCreated  time.Time `json:"date_created"`
+	DateFinished time.Time `json:"date_finished"`
+	State        string    `json:"state"`
+	Retries      int64     `json:"retries"`
+	ErrorType    string    `json:"error_type"`
+	ErrorID      string    `json:"error_id"`
+	StatusURL    string    `json:"status_url"`
+}
+
+// ExportJob contains metadata about an export job.
+type ExportJob struct {
+	TransferJob
+	ExportFormat string `json:"export_format"`
+	FileName     string `json:"file_name"`
+	DownloadURL  string `json:"download_url"`
+}
+
+// ImportJob contains metadata about an import job.
+// TODO: Possibly handle "error_details" differently
+type ImportJob struct {
+	TransferJob
+}
+
+// ImportJobConfig contains configuration parameters for a new import job.
+type ImportJobConfig struct {
+	SchemaName  string    `json:"schema_name,omitempty"`
+	InferHeader string    `json:"infer_header,omitempty"` // "auto", "first_row", or "header"
+	FileURL     string    `json:"file_url,omitempty"`
+	File        io.Reader `json:"-"`
 }

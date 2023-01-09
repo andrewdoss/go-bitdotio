@@ -81,40 +81,40 @@ func main() {
 	// fmt.Printf("Username: %s, Key: %s\n", credentials.Username, credentials.APIKEY)
 
 	// Test listing service accounts and getting a single service account
-	serviceAccounts, err := b.ListServiceAccounts()
-	if err != nil {
-		fmt.Printf("failed to list service accounts: %v", err)
-		os.Exit(1)
-	}
-	fmt.Printf("Found %d service accounts:\n", len(serviceAccounts))
-	var serviceAccountID string
-	for _, s := range serviceAccounts {
-		serviceAccountID = s.ID
-		fmt.Printf("- %s with role %s and created %v", s.Name, s.Role, s.DateCreated)
-		for _, db := range s.Databases {
-			fmt.Printf("    - %s\n", db.Name)
-		}
-	}
+	// serviceAccounts, err := b.ListServiceAccounts()
+	// if err != nil {
+	// 	fmt.Printf("failed to list service accounts: %v", err)
+	// 	os.Exit(1)
+	// }
+	// fmt.Printf("Found %d service accounts:\n", len(serviceAccounts))
+	// var serviceAccountID string
+	// for _, s := range serviceAccounts {
+	// 	serviceAccountID = s.ID
+	// 	fmt.Printf("- %s with role %s and created %v", s.Name, s.Role, s.DateCreated)
+	// 	for _, db := range s.Databases {
+	// 		fmt.Printf("    - %s\n", db.Name)
+	// 	}
+	// }
 
-	serviceAccount, err := b.GetServiceAccount(serviceAccountID)
-	if err != nil {
-		fmt.Printf("failed to get service account: %v", err)
-		os.Exit(1)
-	}
-	fmt.Printf("Service account name: %s\n", serviceAccount.Name)
+	// serviceAccount, err := b.GetServiceAccount(serviceAccountID)
+	// if err != nil {
+	// 	fmt.Printf("failed to get service account: %v", err)
+	// 	os.Exit(1)
+	// }
+	// fmt.Printf("Service account name: %s\n", serviceAccount.Name)
 
-	credentials, err := b.CreateServiceAccountKey(serviceAccountID)
-	if err != nil {
-		fmt.Printf("failed to create service account key: %v", err)
-		os.Exit(1)
-	}
-	fmt.Printf("Username: %s, Key: %s\n", credentials.Username, credentials.APIKEY)
+	// credentials, err := b.CreateServiceAccountKey(serviceAccountID)
+	// if err != nil {
+	// 	fmt.Printf("failed to create service account key: %v", err)
+	// 	os.Exit(1)
+	// }
+	// fmt.Printf("Username: %s, Key: %s\n", credentials.Username, credentials.APIKEY)
 
-	err = b.RevokeServiceAccountKeys(serviceAccountID)
-	if err != nil {
-		fmt.Printf("failed to create service account key: %v", err)
-		os.Exit(1)
-	}
+	// err = b.RevokeServiceAccountKeys(serviceAccountID)
+	// if err != nil {
+	// 	fmt.Printf("failed to create service account key: %v", err)
+	// 	os.Exit(1)
+	// }
 
 	// // Test non-ok response handling
 	// bad_auth_b := bitdotio.NewBitDotIO("fake-token")
@@ -124,4 +124,26 @@ func main() {
 	// 	os.Exit(1)
 	// }
 	// fmt.Printf("Got expected error: %v\n", err)
+
+	// Test creating an import job
+	f, err := os.Open("iris.csv")
+	if err != nil {
+		fmt.Printf("failed to open file: %v\n", err)
+		os.Exit(1)
+	}
+	defer f.Close()
+	importJob, err := b.CreateImportJob("andrewdoss/import", "iris_test", &bitdotio.ImportJobConfig{File: f})
+	if err != nil {
+		fmt.Printf("failed to create new import job: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("Import job ID %s and status url %s.\n", importJob.ID, importJob.StatusURL)
+
+	// Test retrieving status for an import job
+	importJob, err = b.GetImportJob(importJob.ID)
+	if err != nil {
+		fmt.Printf("failed to get import job status: %v", err)
+		os.Exit(1)
+	}
+	fmt.Printf("Import job ID %s and status url %s.\n", importJob.ID, importJob.StatusURL)
 }

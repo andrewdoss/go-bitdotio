@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"strings"
 )
 
 //
@@ -226,4 +227,73 @@ func (b *BitDotIO) RevokeServiceAccountKeys(serviceAccountID string) error {
 		return err
 	}
 	return err
+}
+
+// CreateImportJob creates a new import job.
+// NB: Client is responsible for closing any closable readers passed in for files.
+func (b *BitDotIO) CreateImportJob(dbName string, tableName string, importJobConfig *ImportJobConfig) (*ImportJob, error) {
+	path, err := url.JoinPath("db", dbName, "import/")
+	if err != nil {
+		err = fmt.Errorf("failed to construct request path: %v", err)
+		return nil, err
+	}
+
+	// Note for reviewers: Alternatively, could take a more dynamic approach and
+	// marshall/unmarshall to contain the form (in a way) to the struct field
+	// tag definition, but feels a bit like fighting the language:
+	// https://stackoverflow.com/a/42849112
+	fields := fieldParts{
+		"table_name": strings.NewReader(tableName),
+	}
+	if v := importJobConfig.SchemaName; v != "" {
+		fields["schema_name"] = strings.NewReader(v)
+	}
+	if v := importJobConfig.InferHeader; v != "" {
+		// Note for reviewers: Possibly refactor this using a map[string]struct{}
+		if v != "auto" && v != "first_row" && v != "header" {
+			return nil, fmt.Errorf("InferHeader options are 'auto', 'first_row', or 'header', got %s", v)
+		}
+		fields["infer_header"] = strings.NewReader(v)
+	}
+	if v := importJobConfig.FileURL; v != "" {
+		fields["schema_name"] = strings.NewReader(v)
+	}
+
+	var files fileParts
+	if f := importJobConfig.File; f != nil {
+		files = fileParts{"file": &formFile{tableName, f}}
+	}
+
+	data, err := b.APIClient.CallMultipart("POST", path, fields, files)
+	if err != nil {
+		err = fmt.Errorf("failed to create import job: %v", err)
+		return nil, err
+	}
+
+	var importJob ImportJob
+	if err = json.Unmarshal(data, &importJob); err != nil {
+		err = fmt.Errorf("JSON unmarshaling failed: %s", err)
+	}
+	return &importJob, err
+}
+
+// GetImportJob gets the status for an import job.
+func (b *BitDotIO) GetImportJob(importID string) (*ImportJob, error) {
+	path, err := url.JoinPath("import", importID)
+	if err != nil {
+		err = fmt.Errorf("failed to construct request path: %v", err)
+		return nil, err
+	}
+
+	data, err := b.APIClient.Call("GET", path, nil)
+	if err != nil {
+		err = fmt.Errorf("failed to get import job status: %v", err)
+		return nil, err
+	}
+
+	var importJob ImportJob
+	if err = json.Unmarshal(data, &importJob); err != nil {
+		err = fmt.Errorf("JSON unmarshaling failed: %s", err)
+	}
+	return &importJob, err
 }
