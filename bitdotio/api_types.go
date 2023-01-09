@@ -1,6 +1,7 @@
 package bitdotio
 
 import (
+	"fmt"
 	"io"
 	"time"
 )
@@ -98,4 +99,32 @@ type ImportJobConfig struct {
 	InferHeader string    `json:"infer_header,omitempty"` // "auto", "first_row", or "header"
 	FileURL     string    `json:"file_url,omitempty"`
 	File        io.Reader `json:"-"`
+}
+
+// FileFormat implements custom marshalling to enforce supported export types and set a default
+type FileFormat string
+
+func (f FileFormat) MarshalJSON() ([]byte, error) {
+	var s string
+	if f == "" {
+		s = "csv"
+	} else {
+		s = string(f)
+	}
+	supportedFormats := []string{"csv", "json", "xls", "parquet"}
+	for _, format := range supportedFormats {
+		if s == format {
+			return []byte(`"` + s + `"`), nil
+		}
+	}
+	return nil, fmt.Errorf("%s not in supported formats %v", s, supportedFormats)
+}
+
+// ExportJobConfig contains configuration parameters for a new export job.
+type ExportJobConfig struct {
+	QueryString  string     `json:"query_string,omitempty"`
+	TableName    string     `json:"table_name,omitempty"`
+	SchemaName   string     `json:"schema_name,omitempty"`
+	FileName     string     `json:"file_name,omitempty"`
+	ExportFormat FileFormat `json:"export_format"` // "csv", "json", "xls", "parquet"
 }

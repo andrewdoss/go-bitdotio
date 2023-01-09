@@ -231,36 +231,40 @@ func (b *BitDotIO) RevokeServiceAccountKeys(serviceAccountID string) error {
 
 // CreateImportJob creates a new import job.
 // NB: Client is responsible for closing any closable readers passed in for files.
-func (b *BitDotIO) CreateImportJob(dbName string, tableName string, importJobConfig *ImportJobConfig) (*ImportJob, error) {
+func (b *BitDotIO) CreateImportJob(dbName string, tableName string, config *ImportJobConfig) (*ImportJob, error) {
+	// TODO: validate dbName
+	if (config.FileURL == "") == (config.File == nil) {
+		return nil, fmt.Errorf("Must provide File XOR FileURL")
+	}
+
 	path, err := url.JoinPath("db", dbName, "import/")
 	if err != nil {
 		err = fmt.Errorf("failed to construct request path: %v", err)
 		return nil, err
 	}
 
-	// Note for reviewers: Alternatively, could take a more dynamic approach and
-	// marshall/unmarshall to contain the form (in a way) to the struct field
-	// tag definition, but feels a bit like fighting the language:
+	// Note for reviewers: Could use reflection but it seems using dynamic language
+	// features are less idiomatic in a case like this?
 	// https://stackoverflow.com/a/42849112
 	fields := fieldParts{
 		"table_name": strings.NewReader(tableName),
 	}
-	if v := importJobConfig.SchemaName; v != "" {
+	if v := config.SchemaName; v != "" {
 		fields["schema_name"] = strings.NewReader(v)
 	}
-	if v := importJobConfig.InferHeader; v != "" {
-		// Note for reviewers: Possibly refactor this using a map[string]struct{}
+	if v := config.InferHeader; v != "" {
+		// Note for reviewers: Possibly refactor this using a map[string]struct{} set?
 		if v != "auto" && v != "first_row" && v != "header" {
 			return nil, fmt.Errorf("InferHeader options are 'auto', 'first_row', or 'header', got %s", v)
 		}
 		fields["infer_header"] = strings.NewReader(v)
 	}
-	if v := importJobConfig.FileURL; v != "" {
+	if v := config.FileURL; v != "" {
 		fields["schema_name"] = strings.NewReader(v)
 	}
 
 	var files fileParts
-	if f := importJobConfig.File; f != nil {
+	if f := config.File; f != nil {
 		files = fileParts{"file": &formFile{tableName, f}}
 	}
 
@@ -296,4 +300,63 @@ func (b *BitDotIO) GetImportJob(importID string) (*ImportJob, error) {
 		err = fmt.Errorf("JSON unmarshaling failed: %s", err)
 	}
 	return &importJob, err
+}
+
+// CreateExportJob creates a new export job.
+func (b *BitDotIO) CreateExportJob(dbName string, config *ExportJobConfig) (*ExportJob, error) {
+	// TODO: validate dbName
+	if (config.QueryString == "") == (config.TableName == "") {
+		return nil, fmt.Errorf("Must provide QueryString XOR TableName")
+	}
+
+	// Explicit schema name is required by the API, but we can default to "public"
+	// here if table_name is given.
+	if config.TableName != "" && config.SchemaName == "" {
+		config.SchemaName = "public"
+	}
+
+	path, err := url.JoinPath("db", dbName, "export/")
+	if err != nil {
+		err = fmt.Errorf("failed to construct request path: %v", err)
+		return nil, err
+	}
+
+	body, err := json.Marshal(config)
+	if err != nil {
+		err = fmt.Errorf("failed to marshal export job config: %v", err)
+		return nil, err
+	}
+
+	data, err := b.APIClient.Call("POST", path, body)
+	if err != nil {
+		err = fmt.Errorf("failed to create export job: %v", err)
+		return nil, err
+	}
+
+	var exportJob ExportJob
+	if err = json.Unmarshal(data, &exportJob); err != nil {
+		err = fmt.Errorf("JSON unmarshaling failed: %s", err)
+	}
+	return &exportJob, err
+}
+
+// GetExportJob gets the status for an export job.
+func (b *BitDotIO) GetExportJob(exportID string) (*ExportJob, error) {
+	path, err := url.JoinPath("export", exportID)
+	if err != nil {
+		err = fmt.Errorf("failed to construct request path: %v", err)
+		return nil, err
+	}
+
+	data, err := b.APIClient.Call("GET", path, nil)
+	if err != nil {
+		err = fmt.Errorf("failed to get export job status: %v", err)
+		return nil, err
+	}
+
+	var exportJob ExportJob
+	if err = json.Unmarshal(data, &exportJob); err != nil {
+		err = fmt.Errorf("JSON unmarshaling failed: %s", err)
+	}
+	return &exportJob, err
 }
