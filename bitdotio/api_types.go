@@ -101,7 +101,10 @@ type ImportJobConfig struct {
 	File        io.Reader `json:"-"`
 }
 
-// FileFormat implements custom marshalling to enforce supported export types and set a default
+// FileFormat implements custom marshalling to enforce supported export types and
+// set a default
+// Note for reviewers: I think the validation in this marshaller might actually
+// be better handled with a normal validation function in the related method.
 type FileFormat string
 
 func (f FileFormat) MarshalJSON() ([]byte, error) {

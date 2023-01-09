@@ -117,6 +117,8 @@ func (c *DefaultAPIClient) CallMultipart(method, path string, fields map[string]
 		if fileWriter, err = mpWriter.CreateFormFile(key, formFile.filename); err != nil {
 			return nil, err
 		}
+		// TODO: See if mpWriter materializes entire file in memory/ if so is
+		// there a streaming way to handle the file
 		if _, err := io.Copy(fileWriter, formFile.file); err != nil {
 			return nil, err
 		}
