@@ -2,10 +2,14 @@
 package bitdotio
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/url"
 	"strings"
+	"sync"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 //
@@ -25,27 +29,150 @@ const (
 	// ClientVersion is the version of the bitdotio-python library being used.
 	ClientVersion string = "0.0.0b"
 
-	// DBURL is the url for database connections.
-	DBURL string = "db.bit.io"
+	// DBHost is the host for database connections.
+	DBHost string = "db.bit.io"
 
 	// DBPort is the port for database connections.
 	DBPort string = "5432"
 
+	// MaxConnIdleTime is the maximum duration (as a string) that an idle connection will be kept alive
+	// Currently one second less than the bit.io server-side timeout for idle connections
+	MaxConnIdleTime string = "299s"
+
+	// PoolMinConns is the minimum number of connections to keep alive per pool.
+	PoolMinConns int32 = 0
+
+	SSLMode string = "require"
+
 	UserAgent string = "go-bitdotio-sdk/" + ClientVersion
 )
 
+//
+// BitDotIO
+//
+
 type BitDotIO struct {
-	AccessToken string
+	accessToken string
 	APIClient   APIClient
+	lock        sync.RWMutex
+	pools       map[string]*pgxpool.Pool
 }
 
 // NewBitDotIO constructs a new BitDotIO client.
 func NewBitDotIO(accessToken string) *BitDotIO {
 	return &BitDotIO{
-		AccessToken: accessToken,
+		accessToken: accessToken,
 		APIClient:   NewDefaultAPIClient(accessToken),
+		pools:       make(map[string]*pgxpool.Pool),
 	}
 }
+
+//
+// Connection Pool Methods
+//
+
+// getConnString generates a pgxpool connection string for a particular bit.io database
+func (b *BitDotIO) getConnString(dbName string, maxConns int32) string {
+
+	connString := fmt.Sprintf(
+		"user=%s password=%s host=%s port=%s dbname=%s sslmode=%s pool_min_conns=%d pool_max_conn_idle_time=%s",
+		UserAgent,
+		b.accessToken,
+		DBHost,
+		DBPort,
+		dbName,
+		SSLMode,
+		PoolMinConns,
+		MaxConnIdleTime,
+	)
+	if maxConns != 0 {
+		connString += fmt.Sprintf(" pool_max_conns=%d", maxConns)
+	}
+	return connString
+}
+
+// CreatePool establishes a new connection pool for a bit.io database
+//
+// Note for reviewers: For now, it seems more user-friendly to have a wrapper here,
+// but CreatePoolWithMaxConns could be refactored to take a config struct if we
+// want to expose multiple configuration options later.
+func (b *BitDotIO) CreatePool(ctx context.Context, dbName string) (*pgxpool.Pool, error) {
+	// 0 maxConnections is a sentinal for "use pgxpool default"
+	// Ref: https://pkg.go.dev/github.com/jackc/pgx/v4/pgxpool#ParseConfig
+	return b.CreatePoolWithMaxConns(ctx, dbName, 0)
+}
+
+// CreatePoolWithMaxConns establishes a new connection pool for a bit.io database with a specified max number of connections
+//
+// Note for reviewers: I thought about simply having a GetPool that functions as
+// a GetOrCreate, as in python-bitdotio. That is an attractive option both as
+// a user convenience and because it might enable more performant concurrency
+// safe pool creation (instead of the RW locks currently implemented). However,
+// it's important to have explicit control over the context of a pool being
+// created, which tipped me towards a separate explicit method instead of a
+// dual-purpose getter.
+func (b *BitDotIO) CreatePoolWithMaxConns(ctx context.Context, dbName string, maxConns int32) (*pgxpool.Pool, error) {
+	b.lock.Lock()
+	defer b.lock.Unlock()
+	if pool, ok := b.pools[dbName]; ok {
+		// Check if pool is still open, only create a new one if not
+		// https://github.com/jackc/pgx/issues/891#issuecomment-743775246
+		conn, err := pool.Acquire(context.Background())
+		if err == nil {
+			conn.Release()
+			return nil, fmt.Errorf("pool already exists for db '%s'", dbName)
+		} else if err.Error() != "closed pool" {
+			return nil, fmt.Errorf("found an existing pool for db %s and unable to verify closed state", dbName)
+		}
+	}
+
+	pool, err := pgxpool.New(ctx, b.getConnString(dbName, maxConns))
+	if err != nil {
+		return nil, fmt.Errorf("unable to create pool for db %s: %w", dbName, err)
+	}
+
+	b.pools[dbName] = pool
+	return pool, nil
+}
+
+// GetPool retrieves an existing connection pool for a bit.io database
+func (b *BitDotIO) GetPool(dbName string) (*pgxpool.Pool, error) {
+	b.lock.RLock()
+	defer b.lock.RLock()
+	if pool, ok := b.pools[dbName]; ok {
+		return pool, nil
+	}
+	return nil, fmt.Errorf("pool does not exist for db %s", dbName)
+}
+
+// Connect acquires a connection for a connection pool for a bit.io database
+func (b *BitDotIO) Connect(ctx context.Context, dbName string) (*pgxpool.Conn, error) {
+	pool, err := b.GetPool(dbName)
+	if err != nil {
+		return nil, fmt.Errorf("unable to acquire a connection for db %s: %w", dbName, err)
+	}
+	conn, err := pool.Acquire(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("unable to acquire a connection for db %s: %w", dbName, err)
+	}
+	return conn, nil
+}
+
+// ClosePool closes a connection pool for a bit.io database
+func (b *BitDotIO) ClosePool(dbName string) error {
+	b.lock.Lock()
+	defer b.lock.Unlock()
+	if pool, ok := b.pools[dbName]; ok {
+		pool.Close()
+		delete(b.pools, dbName)
+		return nil
+	}
+	return fmt.Errorf("no open pool found for db %s", dbName)
+}
+
+//
+// API Methods
+//
 
 // ListDatabases lists metadata for all databases that you own or are a collaborator on.
 func (b *BitDotIO) ListDatabases() ([]*Database, error) {
