@@ -9,13 +9,13 @@ import (
 	"net/url"
 )
 
-// APIClient provides an interface for potential mocking of an actual HTTP client
+// APIClient provides an interface for potential mocking of an actual HTTP client.
 type APIClient interface {
 	Call(method, path string, body []byte) ([]byte, error)
 	CallMultipart(method, path string, fields map[string]io.Reader, files fileParts) ([]byte, error)
 }
 
-// DefaultAPIClient implements APIClient
+// DefaultAPIClient implements APIClient using http.Client.
 type DefaultAPIClient struct {
 	accessToken string
 	HTTPClient  *http.Client
@@ -61,14 +61,13 @@ func (c *DefaultAPIClient) Call(method, path string, data []byte) ([]byte, error
 }
 
 // HandleErrorResponse converts an Error API response to an Error.
-// TODO: Possibly should provide further unmarshalling of error body.
 func (s *DefaultAPIClient) HandleErrorResponse(res *http.Response, resBody []byte) error {
 	return &APIError{Status: res.StatusCode, Body: string(resBody)}
 }
 
 // NewRequest constructs requests for bit.io APIs.
 func (c *DefaultAPIClient) NewRequest(method, path string, body io.Reader) (*http.Request, error) {
-	path, err := url.JoinPath(APIURL, APIVersion, path)
+	path, err := url.JoinPath(apiURL, apiVersion, path)
 	if err != nil {
 		err = fmt.Errorf("failed to construct request path: %v", err)
 	}
@@ -79,7 +78,7 @@ func (c *DefaultAPIClient) NewRequest(method, path string, body io.Reader) (*htt
 	}
 
 	req.Header.Add("Authorization", "Bearer "+c.accessToken)
-	req.Header.Add("User-Agent", UserAgent)
+	req.Header.Add("User-Agent", userAgent)
 
 	return req, nil
 }

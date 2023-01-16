@@ -17,53 +17,73 @@ import (
 //
 
 const (
-	// APIVersion is the currently supported API version
-	APIVersion string = "v2beta"
+	// apiVersion is the currently supported API version.
+	apiVersion string = "v2beta"
 
-	// APIURL is the URL of the API service backend.
-	APIURL string = "https://api.bit.io"
+	// apiURL is the URL of the bit.io developer API service.
+	apiURL string = "https://api.bit.io"
 
-	// AppName identifies the type of client to bit.io
-	AppName string = "go-bitdotio-sdk"
+	// appName identifies the client to bit.io during direct Postgres connections.
+	appName string = "go-bitdotio-sdk"
 
-	// ClientVersion is the version of the bitdotio-python library being used.
-	ClientVersion string = "0.0.0b"
+	// clientVersion is the version of the bitdotio-python library being used.
+	clientVersion string = "0.0.0b"
 
-	// DBHost is the host for database connections.
-	DBHost string = "db.bit.io"
+	// dbHost is the host for database connections.
+	dbHost string = "db.bit.io"
 
-	// DBPort is the port for database connections.
-	DBPort string = "5432"
+	// dbPort is the port for database connections.
+	dbPort string = "5432"
 
-	// MaxConnIdleTime is the maximum duration (as a string) that an idle connection will be kept alive
-	// Currently one second less than the bit.io server-side timeout for idle connections
-	MaxConnIdleTime string = "299s"
+	// maxConnIdleTime is the maximum idle time for a connection in a pool.
+	maxConnIdleTime string = "290s"
 
-	// PoolMinConns is the minimum number of connections to keep alive per pool.
-	PoolMinConns int32 = 0
+	// poolMinConns is the minimum number of connections per pool.
+	poolMinConns int32 = 0
 
-	SSLMode string = "require"
+	// pgSSLMode is the Postgres sslmode for connections to bit.io.
+	pgSSLMode string = "require"
 
-	UserAgent string = "go-bitdotio-sdk/" + ClientVersion
+	// userAgent identifies the client to bit.io during HTTP requests.
+	userAgent string = appName + clientVersion
 )
 
+// BitDotIO implements utility methods for usage of the bit.io developer API and
+// manages per-database connection pools.
 //
-// BitDotIO
+// BitDotIO's methods are safe for use across multiple goroutines. In general, a
+// program should only create one BitDotIO instance per unique API key required
+// for access (often only one).
 //
-
+// Some user-only API methods may receive 403 Forbidden responses if called using
+// a service account token. See docs.bit.io for the latest API reference and
+// further information about service accounts.
 type BitDotIO struct {
 	accessToken string
-	APIClient   APIClient
+	apiClient   APIClient
 	lock        sync.RWMutex
 	pools       map[string]*pgxpool.Pool
 }
 
-// NewBitDotIO constructs a new BitDotIO client.
+// Note for reviewers: I briefly looked into making an interface to decouple
+// this package from pgxpool. I'm not sure that's important for a beta version, and further,
+// any interface will have the downsides of:
+// 1. Potentially getting out of sync w/ pgxpool
+// 2. Limiting to a subset of features OR burdening the client with type assertions to use
+//    pgx features that are outside of the interface.
+
+// NewBitDotIO constructs a new BitDotIO client for a provided API key.
 func NewBitDotIO(accessToken string) *BitDotIO {
 	return &BitDotIO{
 		accessToken: accessToken,
-		APIClient:   NewDefaultAPIClient(accessToken),
-		pools:       make(map[string]*pgxpool.Pool),
+		apiClient:   NewDefaultAPIClient(accessToken),
+		// Note for reviewers: I briefly looked into making an interface to decouple
+		// this package from pgxpool. I'm not sure that's important for a beta version, and further,
+		// any interface will have the downsides of:
+		// 1. Potentially getting out of sync w/ pgxpool
+		// 2. Limiting to a subset of features OR burdening the client with type assertions to use
+		//    pgx features that are outside of the interface.
+		pools: make(map[string]*pgxpool.Pool),
 	}
 }
 
@@ -71,19 +91,19 @@ func NewBitDotIO(accessToken string) *BitDotIO {
 // Connection Pool Methods
 //
 
-// getConnString generates a pgxpool connection string for a particular bit.io database
+// getConnString generates a pgxpool connection string for a bit.io database.
 func (b *BitDotIO) getConnString(dbName string, maxConns int32) string {
 
 	connString := fmt.Sprintf(
 		"user=%s password=%s host=%s port=%s dbname=%s sslmode=%s pool_min_conns=%d pool_max_conn_idle_time=%s",
-		UserAgent,
+		userAgent,
 		b.accessToken,
-		DBHost,
-		DBPort,
+		dbHost,
+		dbPort,
 		dbName,
-		SSLMode,
-		PoolMinConns,
-		MaxConnIdleTime,
+		pgSSLMode,
+		poolMinConns,
+		maxConnIdleTime,
 	)
 	if maxConns != 0 {
 		connString += fmt.Sprintf(" pool_max_conns=%d", maxConns)
@@ -91,26 +111,22 @@ func (b *BitDotIO) getConnString(dbName string, maxConns int32) string {
 	return connString
 }
 
-// CreatePool establishes a new connection pool for a bit.io database
-//
-// Note for reviewers: For now, it seems more user-friendly to have a wrapper here,
-// but CreatePoolWithMaxConns could be refactored to take a config struct if we
-// want to expose multiple configuration options later.
+// CreatePool establishes a new connection pool for a bit.io database. dbName
+// must be a full, user-qualified database name (e.g. `username/dbname`).
+// CreatePool can also be called for a database that previously had a pool that
+// has been closed and will handle replacing the closed pool with a new open pool.
 func (b *BitDotIO) CreatePool(ctx context.Context, dbName string) (*pgxpool.Pool, error) {
-	// 0 maxConnections is a sentinal for "use pgxpool default"
-	// Ref: https://pkg.go.dev/github.com/jackc/pgx/v4/pgxpool#ParseConfig
+	// 0 maxConnections is a sentinal for "use pgxpool default". See ref for
+	// default: https://pkg.go.dev/github.com/jackc/pgx/v5/pgxpool#ParseConfig
 	return b.CreatePoolWithMaxConns(ctx, dbName, 0)
 }
 
-// CreatePoolWithMaxConns establishes a new connection pool for a bit.io database with a specified max number of connections
-//
-// Note for reviewers: I thought about simply having a GetPool that functions as
-// a GetOrCreate, as in python-bitdotio. That is an attractive option both as
-// a user convenience and because it might enable more performant concurrency
-// safe pool creation (instead of the RW locks currently implemented). However,
-// it's important to have explicit control over the context of a pool being
-// created, which tipped me towards a separate explicit method instead of a
-// dual-purpose getter.
+// Note for reviewers: CreatePoolWithMaxConns could be refactored to take a
+// config struct if we want to expose multiple configuration options later.
+
+// CreatePoolWithMaxConns establishes a new connection pool for a bit.io database
+// with a specified max number of connections, maxConns. See CreatePool for other
+// documentation.
 func (b *BitDotIO) CreatePoolWithMaxConns(ctx context.Context, dbName string, maxConns int32) (*pgxpool.Pool, error) {
 	b.lock.Lock()
 	defer b.lock.Unlock()
@@ -125,17 +141,27 @@ func (b *BitDotIO) CreatePoolWithMaxConns(ctx context.Context, dbName string, ma
 			return nil, fmt.Errorf("found an existing pool for db %s and unable to verify closed state", dbName)
 		}
 	}
-
+	// Note for reviewers: we could technically make pool creation non-locking by
+	// bundling the pools w/ ready channels in the map, but pool creation takes
+	// about 1 ms on my 5-year old mid-level mac mini, and I also think our pool
+	// management methods are less performance-critical than the pgxpool itself.
 	pool, err := pgxpool.New(ctx, b.getConnString(dbName, maxConns))
 	if err != nil {
 		return nil, fmt.Errorf("unable to create pool for db %s: %w", dbName, err)
 	}
-
 	b.pools[dbName] = pool
 	return pool, nil
 }
 
-// GetPool retrieves an existing connection pool for a bit.io database
+// Note for reviewers: I thought about simply having a GetPool that functions as
+// a GetOrCreate, as in python-bitdotio. That is an attractive option both as
+// a user convenience and because it might enable more performant concurrency
+// safe pool creation (instead of the RW locks currently implemented). However,
+// it's important to have explicit control over the context of a pool being
+// created, which tipped me towards a separate explicit method instead of a
+// dual-purpose getter.
+
+// GetPool retrieves an existing connection pool for a bit.io database.
 func (b *BitDotIO) GetPool(dbName string) (*pgxpool.Pool, error) {
 	b.lock.RLock()
 	defer b.lock.RLock()
@@ -145,7 +171,7 @@ func (b *BitDotIO) GetPool(dbName string) (*pgxpool.Pool, error) {
 	return nil, fmt.Errorf("pool does not exist for db %s", dbName)
 }
 
-// Connect acquires a connection for a connection pool for a bit.io database
+// Connect acquires a connection from an existing pool for a bit.io database.
 func (b *BitDotIO) Connect(ctx context.Context, dbName string) (*pgxpool.Conn, error) {
 	pool, err := b.GetPool(dbName)
 	if err != nil {
@@ -158,7 +184,8 @@ func (b *BitDotIO) Connect(ctx context.Context, dbName string) (*pgxpool.Conn, e
 	return conn, nil
 }
 
-// ClosePool closes a connection pool for a bit.io database
+// ClosePool closes a connection pool for a bit.io database. Pools can be safely
+// closed using this BitDotIO method or directly from the pool API.
 func (b *BitDotIO) ClosePool(dbName string) error {
 	b.lock.Lock()
 	defer b.lock.Unlock()
@@ -176,7 +203,7 @@ func (b *BitDotIO) ClosePool(dbName string) error {
 
 // ListDatabases lists metadata for all databases that you own or are a collaborator on.
 func (b *BitDotIO) ListDatabases() ([]*Database, error) {
-	data, err := b.APIClient.Call("GET", "db/", nil)
+	data, err := b.apiClient.Call("GET", "db/", nil)
 	if err != nil {
 		err = fmt.Errorf("failed to get list of databases: %v", err)
 		return nil, err
@@ -189,14 +216,14 @@ func (b *BitDotIO) ListDatabases() ([]*Database, error) {
 }
 
 // CreateDatabase creates a new database.
-func (b *BitDotIO) CreateDatabase(name string, databaseConfig *DatabaseConfig) (*Database, error) {
+func (b *BitDotIO) CreateDatabase(databaseConfig *DatabaseConfig) (*Database, error) {
 	body, err := json.Marshal(databaseConfig)
 	if err != nil {
 		err = fmt.Errorf("failed to serialize new database params: %v", err)
 		return nil, err
 	}
 
-	data, err := b.APIClient.Call("POST", "db/", body)
+	data, err := b.apiClient.Call("POST", "db/", body)
 	if err != nil {
 		err = fmt.Errorf("failed to create database: %v", err)
 		return nil, err
@@ -216,7 +243,7 @@ func (b *BitDotIO) GetDatabase(username, dbName string) (*Database, error) {
 		return nil, err
 	}
 
-	data, err := b.APIClient.Call("GET", path, nil)
+	data, err := b.apiClient.Call("GET", path, nil)
 	if err != nil {
 		err = fmt.Errorf("failed to get database: %v", err)
 		return nil, err
@@ -236,7 +263,7 @@ func (b *BitDotIO) DeleteDatabase(username, dbName string) error {
 		return err
 	}
 
-	_, err = b.APIClient.Call("DELETE", path, nil)
+	_, err = b.apiClient.Call("DELETE", path, nil)
 	if err != nil {
 		err = fmt.Errorf("failed to delete database: %v", err)
 		return err
@@ -258,7 +285,7 @@ func (b *BitDotIO) UpdateDatabase(username, dbName string, databaseConfig *Datab
 		return nil, err
 	}
 
-	data, err := b.APIClient.Call("PATCH", path, body)
+	data, err := b.apiClient.Call("PATCH", path, body)
 	if err != nil {
 		err = fmt.Errorf("failed to update database: %v", err)
 		return nil, err
@@ -270,11 +297,11 @@ func (b *BitDotIO) UpdateDatabase(username, dbName string, databaseConfig *Datab
 	return &database, err
 }
 
-// CreateKey creates a new API key/database password with the same permissions as the requester
+// CreateKey creates a new API key/database password with the same permissions as the requester.
 func (b *BitDotIO) CreateKey() (*Credentials, error) {
 	path := "api-key/"
 
-	data, err := b.APIClient.Call("POST", path, nil)
+	data, err := b.apiClient.Call("POST", path, nil)
 	if err != nil {
 		err = fmt.Errorf("failed to create a new key: %v", err)
 		return nil, err
@@ -286,9 +313,9 @@ func (b *BitDotIO) CreateKey() (*Credentials, error) {
 	return &credentials, err
 }
 
-// ListServiceAccounts lists metadata pertaining to service accounts the requester has created
+// ListServiceAccounts lists metadata pertaining to service accounts the requester has created.
 func (b *BitDotIO) ListServiceAccounts() ([]*ServiceAccount, error) {
-	data, err := b.APIClient.Call("GET", "service-account/", nil)
+	data, err := b.apiClient.Call("GET", "service-account/", nil)
 	if err != nil {
 		err = fmt.Errorf("failed to get a list of service accounts: %v", err)
 		return nil, err
@@ -308,7 +335,7 @@ func (b *BitDotIO) GetServiceAccount(serviceAccountID string) (*ServiceAccount, 
 		return nil, err
 	}
 
-	data, err := b.APIClient.Call("GET", path, nil)
+	data, err := b.apiClient.Call("GET", path, nil)
 	if err != nil {
 		err = fmt.Errorf("failed to get service account: %v", err)
 		return nil, err
@@ -328,7 +355,7 @@ func (b *BitDotIO) CreateServiceAccountKey(serviceAccountID string) (*Credential
 		return nil, err
 	}
 
-	data, err := b.APIClient.Call("POST", path, nil)
+	data, err := b.apiClient.Call("POST", path, nil)
 	if err != nil {
 		err = fmt.Errorf("failed to create new service account key: %v", err)
 		return nil, err
@@ -348,7 +375,7 @@ func (b *BitDotIO) RevokeServiceAccountKeys(serviceAccountID string) error {
 		return err
 	}
 
-	_, err = b.APIClient.Call("DELETE", path, nil)
+	_, err = b.apiClient.Call("DELETE", path, nil)
 	if err != nil {
 		err = fmt.Errorf("failed to revoke service account keys: %v", err)
 		return err
@@ -356,23 +383,21 @@ func (b *BitDotIO) RevokeServiceAccountKeys(serviceAccountID string) error {
 	return err
 }
 
-// CreateImportJob creates a new import job.
-// NB: Client is responsible for closing any closable readers passed in for files.
-func (b *BitDotIO) CreateImportJob(dbName string, tableName string, config *ImportJobConfig) (*ImportJob, error) {
+// CreateImportJob creates a new import job. Client is responsible for closing
+// any closable readers passed in as the File field of an *ImportJobConfig.
+func (b *BitDotIO) CreateImportJob(fullDBName string, tableName string, config *ImportJobConfig) (*ImportJob, error) {
 	// TODO: validate dbName
 	if (config.FileURL == "") == (config.File == nil) {
 		return nil, fmt.Errorf("Must provide File XOR FileURL")
 	}
 
-	path, err := url.JoinPath("db", dbName, "import/")
+	path, err := url.JoinPath("db", fullDBName, "import/")
 	if err != nil {
 		err = fmt.Errorf("failed to construct request path: %v", err)
 		return nil, err
 	}
 
-	// Note for reviewers: Could use reflection but it seems using dynamic language
-	// features are less idiomatic in a case like this?
-	// https://stackoverflow.com/a/42849112
+	// Add non-file request parts
 	fields := fieldParts{
 		"table_name": strings.NewReader(tableName),
 	}
@@ -380,7 +405,6 @@ func (b *BitDotIO) CreateImportJob(dbName string, tableName string, config *Impo
 		fields["schema_name"] = strings.NewReader(v)
 	}
 	if v := config.InferHeader; v != "" {
-		// Note for reviewers: Possibly refactor this using a map[string]struct{} set?
 		if v != "auto" && v != "first_row" && v != "header" {
 			return nil, fmt.Errorf("InferHeader options are 'auto', 'first_row', or 'header', got %s", v)
 		}
@@ -390,12 +414,13 @@ func (b *BitDotIO) CreateImportJob(dbName string, tableName string, config *Impo
 		fields["schema_name"] = strings.NewReader(v)
 	}
 
+	// Add file request parts
 	var files fileParts
 	if f := config.File; f != nil {
 		files = fileParts{"file": &formFile{tableName, f}}
 	}
 
-	data, err := b.APIClient.CallMultipart("POST", path, fields, files)
+	data, err := b.apiClient.CallMultipart("POST", path, fields, files)
 	if err != nil {
 		err = fmt.Errorf("failed to create import job: %v", err)
 		return nil, err
@@ -416,7 +441,7 @@ func (b *BitDotIO) GetImportJob(importID string) (*ImportJob, error) {
 		return nil, err
 	}
 
-	data, err := b.APIClient.Call("GET", path, nil)
+	data, err := b.apiClient.Call("GET", path, nil)
 	if err != nil {
 		err = fmt.Errorf("failed to get import job status: %v", err)
 		return nil, err
@@ -430,7 +455,7 @@ func (b *BitDotIO) GetImportJob(importID string) (*ImportJob, error) {
 }
 
 // CreateExportJob creates a new export job.
-func (b *BitDotIO) CreateExportJob(dbName string, config *ExportJobConfig) (*ExportJob, error) {
+func (b *BitDotIO) CreateExportJob(fullDBName string, config *ExportJobConfig) (*ExportJob, error) {
 	// TODO: validate dbName
 	if (config.QueryString == "") == (config.TableName == "") {
 		return nil, fmt.Errorf("Must provide QueryString XOR TableName")
@@ -442,7 +467,7 @@ func (b *BitDotIO) CreateExportJob(dbName string, config *ExportJobConfig) (*Exp
 		config.SchemaName = "public"
 	}
 
-	path, err := url.JoinPath("db", dbName, "export/")
+	path, err := url.JoinPath("db", fullDBName, "export/")
 	if err != nil {
 		err = fmt.Errorf("failed to construct request path: %v", err)
 		return nil, err
@@ -454,7 +479,7 @@ func (b *BitDotIO) CreateExportJob(dbName string, config *ExportJobConfig) (*Exp
 		return nil, err
 	}
 
-	data, err := b.APIClient.Call("POST", path, body)
+	data, err := b.apiClient.Call("POST", path, body)
 	if err != nil {
 		err = fmt.Errorf("failed to create export job: %v", err)
 		return nil, err
@@ -475,7 +500,7 @@ func (b *BitDotIO) GetExportJob(exportID string) (*ExportJob, error) {
 		return nil, err
 	}
 
-	data, err := b.APIClient.Call("GET", path, nil)
+	data, err := b.apiClient.Call("GET", path, nil)
 	if err != nil {
 		err = fmt.Errorf("failed to get export job status: %v", err)
 		return nil, err
@@ -486,4 +511,28 @@ func (b *BitDotIO) GetExportJob(exportID string) (*ExportJob, error) {
 		err = fmt.Errorf("JSON unmarshaling failed: %s", err)
 	}
 	return &exportJob, err
+}
+
+// Query executes a query using the HTTP API and returns the reponse as JSON-serialized bytes.
+func (b *BitDotIO) Query(fullDBName string, queryString string) (*QueryResult, error) {
+	path := "query"
+
+	query := &Query{DatabaseName: fullDBName, QueryString: queryString}
+	body, err := json.Marshal(query)
+	if err != nil {
+		err = fmt.Errorf("failed to serialize query: %v", err)
+		return nil, err
+	}
+
+	data, err := b.apiClient.Call("POST", path, body)
+	if err != nil {
+		err = fmt.Errorf("query request failed: %v", err)
+		return nil, err
+	}
+
+	var queryResult QueryResult
+	if err = json.Unmarshal(data, &queryResult); err != nil {
+		err = fmt.Errorf("JSON unmarshaling failed: %s", err)
+	}
+	return &queryResult, err
 }

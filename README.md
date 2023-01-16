@@ -1,18 +1,10 @@
 ## go-bitdotio
 
-Very early work-in-progress on a Go SDK for bit.io. Many TODO's are noted 
-throughout the code. At a high-level, major TODO's include:
-- Handle dates without times
-- How to best handle optiona API params, esp. IsPrivate which defaults to false
-    - Should we use varying constructors, or make users explicitly provide all params in each call to a bitdotio method?
-- API Import/Export
-- Query Endpoint
-- Postgres connections/pooling
+TODOs:
 - Tests
-- Real/configurable logging
-- Organizing as a proper Go module
-- Cleaning up private/exported identifiers
-- Error message handling
+- Settle on username and dbName as separate or concat params
+- CI test runs for PRs
+- Clean up this readme with usage examples
 
 Testing is not set up yet, `main.go` demonstrates the initial progress.
 
@@ -23,11 +15,11 @@ func main() {
 	// Setup
 	token := os.Getenv("BITDOTIO_TOKEN")
 	b := bitdotio.NewBitDotIO(token)
+	username := "andrewdoss"
 
-	newDBName := "foo_db8"
-	// Demonstrate creating a database
+	// Create a database
+	newDBName := "foo_db12"
 	newDatabase, err := b.CreateDatabase(
-		newDBName,
 		&bitdotio.DatabaseConfig{Name: newDBName, IsPrivate: true},
 	)
 	if err != nil {
@@ -36,7 +28,7 @@ func main() {
 	}
 	fmt.Printf("Create Example: %v\n", newDatabase.Name)
 
-	// Demonstrate listing databases
+	// List databases
 	databases, err := b.ListDatabases()
 	if err != nil {
 		fmt.Printf("main failed to list databases: %v", err)
@@ -47,8 +39,8 @@ func main() {
 		fmt.Printf("- %v\n", db.Name)
 	}
 
-	// Demonstrate getting a database
-	database, err := b.GetDatabase("andrewdoss", newDBName)
+	// Get a database
+	database, err := b.GetDatabase(username, newDBName)
 	if err != nil {
 		fmt.Printf("failed to get database: %v", err)
 		os.Exit(1)
@@ -57,10 +49,10 @@ func main() {
 	usageCurrent := database.UsageCurrent
 	fmt.Printf("Usage: %v %v %v\n", usageCurrent.RowsQueried, usageCurrent.PeriodStart, usageCurrent.PeriodEnd)
 
-	// Confirm update
+	// Update a database
 	updatedDBName := newDBName + "-updated"
 	database, err = b.UpdateDatabase(
-		"andrewdoss",
+		username,
 		newDBName,
 		&bitdotio.DatabaseConfig{Name: updatedDBName, IsPrivate: true},
 	)
@@ -70,21 +62,7 @@ func main() {
 	}
 	fmt.Printf("Update Example: %v\n", database.Name)
 
-	// Demonstrate deleting a database
-	err = b.DeleteDatabase("andrewdoss", updatedDBName)
-	if err != nil {
-		fmt.Printf("failed to delete database: %v", err)
-		os.Exit(1)
-	}
-	// Confirm deletion
-	databases, err = b.ListDatabases()
-	if err != nil {
-		fmt.Printf("failed to list databases: %v", err)
-		os.Exit(1)
-	}
-	fmt.Printf("Confirming delete... found %d databases\n", len(databases))
-
-	// Test creating a new API key
+	// Create an API key
 	credentials, err := b.CreateKey()
 	if err != nil {
 		fmt.Printf("failed to create a personal key: %v", err)
@@ -92,7 +70,7 @@ func main() {
 	}
 	fmt.Printf("Username: %s, Key: %s\n", credentials.Username, credentials.APIKEY)
 
-	Test listing service accounts and getting a single service account
+	// List service accounts
 	serviceAccounts, err := b.ListServiceAccounts()
 	if err != nil {
 		fmt.Printf("failed to list service accounts: %v", err)
@@ -108,6 +86,7 @@ func main() {
 		}
 	}
 
+	// Get a service account
 	serviceAccount, err := b.GetServiceAccount(serviceAccountID)
 	if err != nil {
 		fmt.Printf("failed to get service account: %v", err)
@@ -115,7 +94,8 @@ func main() {
 	}
 	fmt.Printf("Service account name: %s\n", serviceAccount.Name)
 
-	credentials, err := b.CreateServiceAccountKey(serviceAccountID)
+	// Get a service account key
+	credentials, err = b.CreateServiceAccountKey(serviceAccountID)
 	if err != nil {
 		fmt.Printf("failed to create service account key: %v", err)
 		os.Exit(1)
@@ -128,7 +108,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Test non-ok response handling
+	// Non-ok response handling
 	bad_auth_b := bitdotio.NewBitDotIO("fake-token")
 	_, err = bad_auth_b.ListServiceAccounts()
 	if err == nil {
@@ -137,21 +117,21 @@ func main() {
 	}
 	fmt.Printf("Got expected error: %v\n", err)
 
-	Test creating an import job
+	// Create an import job
 	f, err := os.Open("iris.csv")
 	if err != nil {
 		fmt.Printf("failed to open file: %v\n", err)
 		os.Exit(1)
 	}
 	defer f.Close()
-	importJob, err := b.CreateImportJob("andrewdoss/import", "iris_test", &bitdotio.ImportJobConfig{File: f})
+	importJob, err := b.CreateImportJob(username+"/"+updatedDBName, "iris_test", &bitdotio.ImportJobConfig{File: f})
 	if err != nil {
 		fmt.Printf("failed to create new import job: %v\n", err)
 		os.Exit(1)
 	}
 	fmt.Printf("Import job ID %s and status url %s.\n", importJob.ID, importJob.StatusURL)
 
-	// Test retrieving status for an import job
+	// Retrieve import job status
 	importJob, err = b.GetImportJob(importJob.ID)
 	if err != nil {
 		fmt.Printf("failed to get import job status: %v", err)
@@ -159,20 +139,63 @@ func main() {
 	}
 	fmt.Printf("Import job ID %s and status url %s.\n", importJob.ID, importJob.StatusURL)
 
-	// Test creating an export job
-	exportJob, err := b.CreateExportJob("andrewdoss/import", &bitdotio.ExportJobConfig{TableName: "iris_test"})
+	// Create export job
+	exportJob, err := b.CreateExportJob(username+"/"+updatedDBName, &bitdotio.ExportJobConfig{TableName: "iris_test"})
 	if err != nil {
 		fmt.Printf("failed to create new export job: %v\n", err)
 		os.Exit(1)
 	}
 	fmt.Printf("Export job ID %s and status url %s.\n", exportJob.ID, exportJob.StatusURL)
 
-	// Test retrieving an export job status
+	// Retrieve export job status
 	exportJob, err = b.GetExportJob(exportJob.ID)
 	if err != nil {
 		fmt.Printf("failed to get export job status: %v\n", err)
 		os.Exit(1)
 	}
 	fmt.Printf("Export job ID %s and status url %s.\n", exportJob.ID, exportJob.StatusURL)
+
+	// HTTP query
+	queryResult, err := b.Query(username+"/"+updatedDBName, "SELECT 1 AS col1, 'hello' AS col2;")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Query failed: %v\n", err)
+		os.Exit(1)
+	}
+	// TODO: Add demo for unmarshalling data rows
+	fmt.Println(queryResult)
+	for k, v := range queryResult.Metadata {
+		fmt.Println(k, v)
+	}
+
+	// Create connection pool
+	ctx := context.Background()
+	pool, err := b.CreatePool(ctx, username+"/"+updatedDBName)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Pool creation failed: %v\n", err)
+		os.Exit(1)
+	}
+	defer pool.Close()
+
+	var greeting string
+	err = pool.QueryRow(context.Background(), "select 'Hello, world!'").Scan(&greeting)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "QueryRow failed: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println(greeting)
+
+	// Delete database
+	err = b.DeleteDatabase(username+"/"+updatedDBName, updatedDBName)
+	if err != nil {
+		fmt.Printf("failed to delete database: %v", err)
+		os.Exit(1)
+	}
+	// Confirm deletion
+	databases, err = b.ListDatabases()
+	if err != nil {
+		fmt.Printf("failed to list databases: %v", err)
+		os.Exit(1)
+	}
+	fmt.Printf("Confirming delete... found %d databases\n", len(databases))
 }
 ```

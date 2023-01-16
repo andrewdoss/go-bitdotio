@@ -131,3 +131,16 @@ type ExportJobConfig struct {
 	FileName     string     `json:"file_name,omitempty"`
 	ExportFormat FileFormat `json:"export_format"` // "csv", "json", "xls", "parquet"
 }
+
+// Query defines an HTTP query.
+type Query struct {
+	DatabaseName string `json:"database_name"`
+	QueryString  string `json:"query_string"`
+}
+
+// Query defines an HTTP query result.
+type QueryResult struct {
+	QueryString string            `json:"query_string"`
+	Metadata    map[string]string `json:"metadata"`
+	Data        [][]interface{}   `json:"data"`
+}
