@@ -61,8 +61,9 @@ const (
 type BitDotIO struct {
 	accessToken string
 	apiClient   APIClient
-	lock        sync.RWMutex
-	pools       map[string]*pgxpool.Pool
+	// Note for reviewers: debatable whether RW lock is a net benefit over simple mutex given extra overhead
+	lock  sync.RWMutex
+	pools map[string]*pgxpool.Pool
 }
 
 // Note for reviewers: I briefly looked into making an interface to decouple
@@ -155,7 +156,7 @@ func (b *BitDotIO) CreatePoolWithMaxConns(ctx context.Context, dbName string, ma
 
 // Note for reviewers: I thought about simply having a GetPool that functions as
 // a GetOrCreate, as in python-bitdotio. That is an attractive option both as
-// a user convenience and because it might enable more performant concurrency
+// a user convenience and because it might enable more performant concurrency-
 // safe pool creation (instead of the RW locks currently implemented). However,
 // it's important to have explicit control over the context of a pool being
 // created, which tipped me towards a separate explicit method instead of a

@@ -4,11 +4,9 @@ TODOs:
 - Tests
 - Settle on username and dbName as separate or concat params
 - CI test runs for PRs
-- Clean up this readme with usage examples
+- Clean up readme with usage examples
 
-Testing is not set up yet, `main.go` demonstrates the initial progress.
-
-Demo:
+Beta Demo:
 
 ```go
 func main() {
@@ -167,7 +165,7 @@ func main() {
 		fmt.Println(k, v)
 	}
 
-	// Create connection pool
+	// Create connection pool and query
 	ctx := context.Background()
 	pool, err := b.CreatePool(ctx, username+"/"+updatedDBName)
 	if err != nil {
