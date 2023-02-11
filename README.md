@@ -1,5 +1,7 @@
 ## go-bitdotio
 
+Work-in-progress Go SDK for bit.io.
+
 TODOs:
 - Tests
 - Settle on username and dbName as separate or concat params
